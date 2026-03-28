@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 Bot 形象管理插件 for AstrBot
 版本: 1.0.0 | 作者: MMaltSugar
 项目简介
