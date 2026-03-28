@@ -1,0 +1,28 @@
+{
+  "llm_insert_position": {
+    "description": "形象数据插入LLM上下文的位置",
+    "type": "string",
+    "default": "system_prompt_end",
+    "hint": "可选值：system_prompt_start(系统提示开头)、system_prompt_end(系统提示结尾)、user_prompt_start(用户提示开头)、user_prompt_end(用户提示结尾)",
+    "obvious_hint": true,
+    "options": [
+        "usystem_prompt_start",
+        "system_prompt_end",
+        "user_prompt_start",
+        "user_prompt_end"
+    ]
+  },
+  "avatar_fields": {
+    "description": "Bot形象词条列表（逗号分隔）",
+    "type": "string",
+    "default": "发色,瞳色,脸型,体型,胸型,上衣,下着,鞋子,袜子,发型,身高,性格",
+    "hint": "可自定义增删词条，如：发色,瞳色,体型,胸型,上衣,下着,鞋履,配饰",
+    "obvious_hint": true
+  },
+  "allow_custom_fields": {
+    "description": "是否允许LLM创建自定义词条",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后LLM可创建配置外的词条"
+  }
+}
