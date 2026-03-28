@@ -1,5 +1,6 @@
-name: bot_avatar_manager
-description: Bot形象管理插件，支持多人格/多着装形象管理，自动将形象内容插入到LLM上下文。可以让bot给你来一场换装秀哦~
+name: astrbot_plugin_avatar_manager
+display_name: Bot的衣柜
+description: 提供形象管理功能，让你的bot学会记录装束并自主切换
 version: 1.0.0
 author: MMaltSugar
-display_name: Bot换装
+repo: https://github.com/MMaltSugar/astrbot_plugin_avatar_manager
