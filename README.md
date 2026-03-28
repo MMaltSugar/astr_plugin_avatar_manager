@@ -2,7 +2,7 @@
 =======
 ## astr_plugin_avatar_manager
 
-# Bot 形象管理插件 for AstrBot
+# Bot的衣柜 for AstrBot
 
 版本: 1.0.0 | 作者: MMaltSugar
 
