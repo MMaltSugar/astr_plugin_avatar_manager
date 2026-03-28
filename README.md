@@ -1,0 +1,1 @@
+# astr_plugin_avatar_manager
