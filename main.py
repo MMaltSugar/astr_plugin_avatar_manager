@@ -2,14 +2,11 @@ import json
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Any, cast
+from pathlib import Path
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, StarTools  # 导入StarTools
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api import FunctionTool
-
-# ===================== 全局变量：LLM工具访问插件实例 =====================
-_plugin_instance: Optional["BotAvatarManager"] = None
-
 
 # ===================== 重构后的数据模型（完全符合要求） =====================
 @dataclass
@@ -72,11 +69,12 @@ def _get_conversation_id(event: AstrMessageEvent) -> str:
     return fallback_sid
 
 
-# ===================== LLM函数工具定义（适配新结构，彻底解决覆写问题） =====================
+# ===================== LLM函数工具定义（移除全局变量，接收插件实例） =====================
 @dataclass
 class CreateAvatarOutfitTool(FunctionTool):
     name: str = "create_avatar_outfit"
     description: str = "创建/覆盖形象列表中的指定着装，支持自定义词条和简介。【规则】：修改4条及以上词条，直接调用本工具覆写对应着装"
+    plugin_instance: "BotAvatarManager" = field(default=None, repr=False)  # 持有插件实例
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -105,24 +103,23 @@ class CreateAvatarOutfitTool(FunctionTool):
         fields: Dict[str, str],
         description: str = "无简介",
     ):
-        if not _plugin_instance:
-            return "❌ 插件未正确加载"
+        # 直接使用持有的插件实例，不再依赖全局变量
         conversation_id = _get_conversation_id(event)
 
         # 校验配置允许的词条
-        config_fields = _plugin_instance.config["avatar_fields"].split(",")
-        if not _plugin_instance.config.get("allow_custom_fields", True):
+        config_fields = self.plugin_instance.config["avatar_fields"].split(",")
+        if not self.plugin_instance.config.get("allow_custom_fields", True):
             fields = {k: v for k, v in fields.items() if k in config_fields}
 
         # 创建/覆写形象列表中的对应着装
         outfit = AvatarOutfit(description=description, fields=fields)
-        _plugin_instance.save_outfit_to_list(conversation_id, outfit_name, outfit)
+        self.plugin_instance.save_outfit_to_list(conversation_id, outfit_name, outfit)
 
         # 自动设置为当前形象（如果是首次创建）
-        avatar_data = _plugin_instance.load_conversation_avatar(conversation_id)
+        avatar_data = self.plugin_instance.load_conversation_avatar(conversation_id)
         if avatar_data and len(avatar_data.outfits) == 1:
             avatar_data.current_outfit = outfit_name
-            _plugin_instance.save_conversation_avatar(avatar_data)
+            self.plugin_instance.save_conversation_avatar(avatar_data)
 
         return f"✅ 成功在形象列表中创建/覆盖[{outfit_name}]\n简介：{outfit.description}\n形象词条：{fields}"
 
@@ -131,6 +128,7 @@ class CreateAvatarOutfitTool(FunctionTool):
 class SelectAvatarOutfitTool(FunctionTool):
     name: str = "select_avatar_outfit"
     description: str = "切换当前形象，从形象列表中选择指定着装设为当前使用的形象，无需覆写任何数据，仅切换引用"
+    plugin_instance: "BotAvatarManager" = field(default=None, repr=False)  # 持有插件实例
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -145,19 +143,17 @@ class SelectAvatarOutfitTool(FunctionTool):
     )
 
     async def run(self, event: AstrMessageEvent, outfit_name: str):
-        if not _plugin_instance:
-            return "❌ 插件未正确加载"
         conversation_id = _get_conversation_id(event)
 
-        avatar_data = _plugin_instance.load_conversation_avatar(conversation_id)
+        avatar_data = self.plugin_instance.load_conversation_avatar(conversation_id)
         if not avatar_data:
             return f"❌ 错误：当前对话暂无形象数据"
         if outfit_name not in avatar_data.outfits:
             return f"❌ 错误：形象列表中无[{outfit_name}]\n当前可用形象：{list(avatar_data.outfits.keys())}"
 
-        # 仅修改当前形象指针，零成本切换，彻底解决之前的覆写混乱问题
+        # 仅修改当前形象指针
         avatar_data.current_outfit = outfit_name
-        _plugin_instance.save_conversation_avatar(avatar_data)
+        self.plugin_instance.save_conversation_avatar(avatar_data)
 
         # 返回切换后的形象详情
         current_outfit = avatar_data.outfits[outfit_name]
@@ -168,6 +164,7 @@ class SelectAvatarOutfitTool(FunctionTool):
 class ModifyAvatarFieldTool(FunctionTool):
     name: str = "modify_avatar_field"
     description: str = "修改形象列表中指定着装的单个词条或简介。【规则】：仅用于修改1-3条内容，4条及以上请用create_avatar_outfit覆写"
+    plugin_instance: "BotAvatarManager" = field(default=None, repr=False)  # 持有插件实例
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -196,11 +193,9 @@ class ModifyAvatarFieldTool(FunctionTool):
         field_name: str,
         field_value: str,
     ):
-        if not _plugin_instance:
-            return "❌ 插件未正确加载"
         conversation_id = _get_conversation_id(event)
 
-        avatar_data = _plugin_instance.load_conversation_avatar(conversation_id)
+        avatar_data = self.plugin_instance.load_conversation_avatar(conversation_id)
         if not avatar_data:
             return f"❌ 错误：当前对话暂无形象数据"
         if outfit_name not in avatar_data.outfits:
@@ -211,12 +206,12 @@ class ModifyAvatarFieldTool(FunctionTool):
             if len(field_value) > 50:
                 field_value = field_value[:47] + "..."
             avatar_data.outfits[outfit_name].description = field_value
-            _plugin_instance.save_conversation_avatar(avatar_data)
+            self.plugin_instance.save_conversation_avatar(avatar_data)
             return f"✅ 成功修改[{outfit_name}]的简介\n新简介：{field_value}"
 
         # 修改形象词条
         avatar_data.outfits[outfit_name].fields[field_name] = field_value
-        _plugin_instance.save_conversation_avatar(avatar_data)
+        self.plugin_instance.save_conversation_avatar(avatar_data)
         return f"✅ 成功修改[{outfit_name}]的形象词条\n{field_name} → {field_value}"
 
 
@@ -224,6 +219,7 @@ class ModifyAvatarFieldTool(FunctionTool):
 class DeleteAvatarOutfitTool(FunctionTool):
     name: str = "delete_avatar_outfit"
     description: str = "从形象列表中删除指定着装，【限制】：无法删除当前正在使用的形象"
+    plugin_instance: "BotAvatarManager" = field(default=None, repr=False)  # 持有插件实例
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -235,11 +231,9 @@ class DeleteAvatarOutfitTool(FunctionTool):
     )
 
     async def run(self, event: AstrMessageEvent, outfit_name: str):
-        if not _plugin_instance:
-            return "❌ 插件未正确加载"
         conversation_id = _get_conversation_id(event)
 
-        avatar_data = _plugin_instance.load_conversation_avatar(conversation_id)
+        avatar_data = self.plugin_instance.load_conversation_avatar(conversation_id)
         if not avatar_data:
             return f"❌ 错误：当前对话暂无形象数据"
         if outfit_name not in avatar_data.outfits:
@@ -251,7 +245,7 @@ class DeleteAvatarOutfitTool(FunctionTool):
 
         # 执行删除
         del avatar_data.outfits[outfit_name]
-        _plugin_instance.save_conversation_avatar(avatar_data)
+        self.plugin_instance.save_conversation_avatar(avatar_data)
         return f"✅ 成功从形象列表中删除[{outfit_name}]\n剩余可用形象：{list(avatar_data.outfits.keys())}"
 
 
@@ -261,28 +255,24 @@ class BotAvatarManager(Star):
         super().__init__(context)
         self.config = config
 
-        # 初始化数据存储目录
-        self.data_dir = os.path.join(
-            "data", "plugin_data", "astrbot_plugin_avatar_manager"
-        )
-        os.makedirs(self.data_dir, exist_ok=True)
+        # 修复1：使用StarTools获取规范数据目录（pathlib方式）
+        self.data_dir = StarTools.get_data_dir()
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        # 设置全局变量，供LLM工具访问
-        global _plugin_instance
-        _plugin_instance = self
-
-        # 注册LLM工具
+        # 修复3：注册LLM工具时传入插件实例，不再使用全局变量
         self.context.add_llm_tools(
-            CreateAvatarOutfitTool(),
-            SelectAvatarOutfitTool(),
-            ModifyAvatarFieldTool(),
-            DeleteAvatarOutfitTool(),
+            CreateAvatarOutfitTool(plugin_instance=self),
+            SelectAvatarOutfitTool(plugin_instance=self),
+            ModifyAvatarFieldTool(plugin_instance=self),
+            DeleteAvatarOutfitTool(plugin_instance=self),
         )
+        logger.info("=====[avatar_manager]init=====")
 
     # --------------------- 事件监听器：自动插入形象数据到上下文 ---------------------
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req: Any):
-        """LLM请求前钩子：无形象自动创建默认两套，插入当前形象+形象列表到上下文"""
+        #LLM请求前钩子：无形象自动创建默认两套，插入当前形象+形象列表到上下文
+        logger.info("监听到对话，开始插入形象")
         conversation_id = _get_conversation_id(event)
         avatar_data = self.load_conversation_avatar(conversation_id)
 
@@ -352,7 +342,7 @@ class BotAvatarManager(Star):
         elif insert_pos == "user_prompt_end":
             req.prompt += avatar_text
 
-        logger.debug(f"已将对话[{conversation_id}]的形象数据插入到LLM上下文")
+        logger.info(f"已将对话[{conversation_id}]的形象数据插入到LLM上下文")
 
     # --------------------- 用户指令（适配新结构） ---------------------
     @filter.command("查看bot形象")
@@ -392,18 +382,23 @@ class BotAvatarManager(Star):
         event: AstrMessageEvent,
         outfit_name: str,
         description: str = "无简介",
-        **fields,
+        *args,  # 修复4：使用*args接收剩余参数，手动解析等号分隔的字段
     ):
         """管理员创建形象，示例：创建bot形象 泳装 海边度假穿搭 上衣=粉色比基尼 下着=粉色比基尼"""
         conversation_id = _get_conversation_id(event)
 
+        # 修复4：手动解析等号分隔的字段参数
         outfit_fields = {}
+        for arg in args:
+            if "=" in arg:
+                key, value = arg.split("=", 1)  # 只分割第一个等号，避免值中包含等号
+                outfit_fields[key.strip()] = value.strip()
+
+        # 校验配置允许的词条
         config_fields = cast(Optional[str], self.config.get("avatar_fields"))
         if config_fields:
             config_fields_list = config_fields.split(",")
-            for field in config_fields_list:
-                if field in fields:
-                    outfit_fields[field] = fields[field]
+            outfit_fields = {k: v for k, v in outfit_fields.items() if k in config_fields_list}
 
         outfit = AvatarOutfit(description=description, fields=outfit_fields)
         self.save_outfit_to_list(conversation_id, outfit_name, outfit)
@@ -472,13 +467,13 @@ class BotAvatarManager(Star):
 
     # --------------------- 数据读写核心方法（适配新结构+旧数据兼容） ---------------------
     def get_conversation_file_path(self, conversation_id: str) -> str:
-        """获取对话形象数据文件路径"""
-        return os.path.join(self.data_dir, f"{conversation_id}.json")
+        """获取对话形象数据文件路径（修复1：pathlib拼接）"""
+        return str(self.data_dir / f"{conversation_id}.json")
 
     def load_conversation_avatar(
         self, conversation_id: str
     ) -> Optional[ConversationAvatar]:
-        """加载对话形象数据，自动兼容旧版本数据"""
+        """加载对话形象数据，自动兼容旧版本数据（修复2：异常时备份损坏文件）"""
         file_path = self.get_conversation_file_path(conversation_id)
         if not os.path.exists(file_path):
             return None
@@ -537,7 +532,11 @@ class BotAvatarManager(Star):
                 outfits=outfits,
             )
         except Exception as e:
+            # 修复2：备份损坏的文件，避免数据丢失
             logger.error(f"加载对话[{conversation_id}]形象数据失败：{e}")
+            backup_path = f"{file_path}.bak.{os.urandom(4).hex()}"
+            os.rename(file_path, backup_path)
+            logger.warning(f"已将损坏的文件备份至：{backup_path}")
             return None
 
     def save_conversation_avatar(self, avatar_data: ConversationAvatar):
@@ -569,7 +568,5 @@ class BotAvatarManager(Star):
         self.save_conversation_avatar(avatar_data)
 
     async def terminate(self):
-        """插件卸载时清理全局变量"""
-        global _plugin_instance
-        _plugin_instance = None
+        """插件卸载时清理"""
         logger.info("对话级Bot形象管理插件已安全卸载")
